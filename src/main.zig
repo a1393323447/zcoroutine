@@ -11,8 +11,8 @@ pub const CoHandle = core.CoHandle;
 pub const CoConfig = core.CoConfig;
 
 fn sleep_test(s: u32) void {
-    std.debug.print("[Trace] {d} Try to sleep {d} s.\n", .{s, 10 - s});
-    coSleep((10 - s) * 1000 * 1000) catch return;
+    std.debug.print("[Trace] {d} Try to sleep {d} s.\n", .{s, (10 - s) * 3});
+    coSleep((10 - s) * 1000 * 1000 * 3) catch return;
     std.debug.print("[Trace] {d} wake up!\n", .{s});
 }
 

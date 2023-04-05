@@ -41,7 +41,7 @@ pub inline fn coSleep(us: u32) !void {
 
 pub inline fn yield() void {
     MANAGER.?.yield() catch |err| {
-        std.debug.panic("[ERROR] in yield {s}", .{@errorName(err)});
+        std.debug.panic("[ERROR] {s} in yield", .{@errorName(err)});
     };
     return;
 }
@@ -423,22 +423,37 @@ const CCBContainer = struct {
         try self.sleeplist.add(sleep_ccb);
     }
 
+    /// this function will return next coroutine if have one
+    /// 1. look up sleep coroutine that has the smallest wake_at 
+    ///    which means it should be waken first.
+    ///    if it should be waken up then we set cur_ccb to it and
+    ///    set its status to Active
+    ///    if not we record this ccb
+    /// 2. we search in the waitlist if have one we set cur_ccb to it
+    ///    and return it
+    /// 3. if previous steps failed, then we check if we had recorded
+    ///    a sleep ccb. if so, we remove it from the sleep list, 
+    ///    then just wait for it to wake up, set next ccb to it, 
+    ///    set its status to Active and return it
     pub fn moveToNext(self: *Self, t_now: Timestamp) ?*CCB {
         // first we try to wake up the sleep coroutine
         const DELTA: Timestamp = -1000;
         var op_sleep_ccb: ?*CCB = null;
         var wake_at: Timestamp = 0;
         if (self.sleeplist.peekMin()) |sleep_ccb| {
-            const diff = t_now - sleep_ccb.wake_at;
-            if (diff >= DELTA) {
-                // remove this coroutine from sleeplist
-                _ = self.sleeplist.removeMin();
-                if (self.binarySearchCCB(sleep_ccb.id)) |next_ccb_ptr| {
+            if (self.binarySearchCCB(sleep_ccb.id)) |next_ccb_ptr| {
+                const diff = t_now - sleep_ccb.wake_at;
+                if (diff >= DELTA) {
+                    // remove this coroutine from sleeplist
+                    _ = self.sleeplist.removeMin();
+                    // set the coroutine status to Active
                     self.cur_ccb = next_ccb_ptr;
+                    self.cur_ccb.status = .Active;
+                    return next_ccb_ptr;
+                } else {
                     // recored the sleep ccb we find
                     op_sleep_ccb = next_ccb_ptr;
                     wake_at = sleep_ccb.wake_at;
-                    return next_ccb_ptr;
                 }
             }
         }
@@ -447,13 +462,16 @@ const CCBContainer = struct {
             self.cur_ccb = next_ccb_ptr;
             return next_ccb_ptr;
         }
-
         // if no ccb on wait list and we found a sleep ccb
         // then we wait for the sleep ccb
         if (op_sleep_ccb) |sleep_ccb| {
-            const us_sleep = now() - wake_at;
+            // remove from the sleep list
+            _ = self.sleeplist.removeMin();
+            const us_sleep = wake_at - now();
             const nano_sleep = std.math.max(0, us_sleep) * std.time.ns_per_us;
             std.time.sleep(@intCast(u32, nano_sleep));
+            self.cur_ccb = sleep_ccb;
+            self.cur_ccb.status = .Active;
             return sleep_ccb;
         }
 
