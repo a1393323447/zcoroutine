@@ -7,7 +7,7 @@ const MAIN_ID: usize = 0;
 var MANAGER: ?Manager = null;
 
 /// get timestamp in millisecond
-fn now() i64 {
+inline fn now() i64 {
     return std.time.milliTimestamp();
 }
 
@@ -16,22 +16,22 @@ fn ResTypeOfFn(comptime function: anytype) type {
     return @typeInfo(@TypeOf(function)).Fn.return_type orelse void;
 }
 
-pub fn coInit(allocator: Allocator) !void {
+pub inline fn coInit(allocator: Allocator) !void {
     if (MANAGER == null) {
         MANAGER = try Manager.init(allocator);
     }
 }
 
-pub fn coDeinit() void {
+pub inline fn coDeinit() void {
     MANAGER.?.deinit();
 }
 
-pub fn coStart(comptime function: anytype, args: anytype, config: ?CoConfig) !*const CoHandle(ResTypeOfFn(function)) {
+pub inline fn coStart(comptime function: anytype, args: anytype, config: ?CoConfig) !*const CoHandle(ResTypeOfFn(function)) {
     const conf = config orelse CoConfig{};
     return MANAGER.?.coStart(function, args, conf);
 }
 
-pub fn yield() void {
+pub inline fn yield() void {
     MANAGER.?.yield() catch |err| {
         std.debug.panic("[ERROR] in yield {s}", .{@errorName(err)});
     };
@@ -46,11 +46,11 @@ pub export fn currentCtxPtr() callconv(.C) *Context {
     return &MANAGER.?.getCurrentCCBPtr().context;
 }
 
-pub fn currentCCBPtr() callconv(.C) *CCB {
+pub inline fn currentCCBPtr() *CCB {
     return MANAGER.?.getCurrentCCBPtr();
 }
 
-pub fn markCurFinished() void {
+pub inline fn markCurFinished() void {
     MANAGER.?.markCurFinished();
 }
 
@@ -117,7 +117,7 @@ pub fn CoHandle(comptime Res: type) type {
             return self;
         }
 
-        fn deinit(self: *const Self) void {
+        inline fn deinit(self: *const Self) void {
             self.allocator.destroy(self);
         }
     };
@@ -183,11 +183,11 @@ pub const CCB = struct {
         return std.math.order(lhs.elapsed, rhs.elapsed);
     }
 
-    pub fn updateRunTime(self: *Self) void {
+    pub inline fn updateRunTime(self: *Self) void {
         self.elapsed = now() - self.start_time;
     }
 
-    fn deinit(self: *const Self, allocator: Allocator) void {
+    inline fn deinit(self: *const Self, allocator: Allocator) void {
         allocator.free(self.stack);
     }
 };
@@ -221,7 +221,7 @@ fn TypeSafeCallTable(comptime Args: type, comptime Res: type, comptime function:
             }
             // then we need to mark this coroutine(*current* coroutine) as Finished
             markCurFinished();
-            // yield to anthor coroutine
+            // yield to anthor coroutine and never return
             yield();
 
             unreachable;
@@ -265,11 +265,15 @@ const Manager = struct {
         try self.ccb_container.markDead(target_id);
     }
 
-    pub fn getCCBPtr(self: *Self, target_id: usize) ?*CCB {
+    pub inline fn getCCBPtr(self: *Self, target_id: usize) ?*CCB {
         return self.ccb_container.binarySearchCCB(target_id);
     }
 
-    pub noinline fn coStart(self: *Self, comptime function: anytype, args: anytype, config: CoConfig) !*const CoHandle(ResTypeOfFn(function)) {
+    pub fn coStart(
+        self: *Self, 
+        comptime function: anytype, 
+        args: anytype, 
+        config: CoConfig) !*const CoHandle(ResTypeOfFn(function)) {
         const Args = @TypeOf(args);
         const Res = ResTypeOfFn(function);
         // emplace a new ccb in cbb_container and inc next_id
@@ -326,20 +330,20 @@ const CCBContainer = struct {
     dequeue: CCBPQ,
     allocator: Allocator,
 
-    const INIT_CAP: usize = 1;
+    const INIT_CAP: usize = 8;
     
     const Self = @This();
     const CCBPQ = std.PriorityDequeue(*CCB, void, CCB.compareFn);
 
     pub fn init(allocator: Allocator) !Self {
         const ccb_data: []CCB = try allocator.alloc(CCB, INIT_CAP);
-         // emplace a new ccb for main
-        try ccb_data[0].init(allocator, MAIN_ID, CoConfig{
+        // init main ccb
+        const main_ccb: *CCB = &ccb_data[0];
+        try main_ccb.init(allocator, MAIN_ID, CoConfig{
             .name = "main",
-            // main stack would be init when coStart is called
+            // allocate a dummy stack for main
             .stack_size = 0,
         });
-        const main_ccb: *CCB = &ccb_data[0];
         var dequeue = CCBPQ.init(allocator, {});
         return Self{
             .cur_ccb = main_ccb,
@@ -351,7 +355,6 @@ const CCBContainer = struct {
 
     pub fn deinit(self: *Self) void {
         self.dequeue.deinit();
-        // deinit all ccb (except main) stack space
         const len = self.size;
         for (self.ccb_data[0..len]) |ccb| {
             ccb.deinit(self.allocator);
@@ -359,7 +362,7 @@ const CCBContainer = struct {
         self.allocator.free(self.ccb_data);
     }
 
-    pub fn getMainCCBPtr(self: *Self) *CCB {
+    pub inline fn getMainCCBPtr(self: *Self) *CCB {
         std.debug.assert(self.ccb_data[0].id == MAIN_ID);
         return &self.ccb_data[0];
     }
@@ -368,12 +371,12 @@ const CCBContainer = struct {
         try self.dequeue.add(ccb_ptr);
     }
 
-    pub inline fn moveToNext(self: *Self) ?*CCB {
-        const option_ptr = self.dequeue.removeMinOrNull();
-        if (option_ptr) |ccb_ptr| {
-            self.cur_ccb = ccb_ptr;
+    pub fn moveToNext(self: *Self) ?*CCB {
+        if (self.dequeue.removeMinOrNull()) |next_ccb_ptr| {
+            self.cur_ccb = next_ccb_ptr;
+            return next_ccb_ptr;
         }
-        return option_ptr;
+        return null;
     }
 
     /// emplace a CCB in ccb_data
@@ -414,7 +417,7 @@ const CCBContainer = struct {
     ///
     /// if ccb_data does not contain a ccb with given id,
     /// this function make no effects
-    pub inline fn markDead(self: *Self, id: usize) !void {
+    pub fn markDead(self: *Self, id: usize) !void {
         if (self.binarySearchCCB(id)) |target_ccb| {
             // set coroutine status
             target_ccb.status = .Dead;
