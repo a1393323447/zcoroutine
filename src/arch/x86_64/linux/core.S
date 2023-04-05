@@ -57,7 +57,6 @@ initCall:
 
     # load coroutine stack
     movq 40(%rax), %rsp
-    movq %rsp, %rbp 
     
     # call typeSafeCall function
     call *%rsi

@@ -26,7 +26,5 @@ pub const Context = extern struct {
 
     pub inline fn setStack(self: *Self, sp: usize) void {
         self.rsp = sp;
-        self.rbp = sp;
     }
 };
-
