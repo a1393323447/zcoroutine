@@ -46,11 +46,11 @@ pub export fn currentCtxPtr() callconv(.C) *Context {
     return &MANAGER.?.getCurrentCCBPtr().context;
 }
 
-pub inline fn currentCCBPtr() *CCB {
+inline fn currentCCBPtr() *CCB {
     return MANAGER.?.getCurrentCCBPtr();
 }
 
-pub inline fn markCurFinished() void {
+inline fn markCurFinished() void {
     MANAGER.?.markCurFinished();
 }
 
@@ -123,7 +123,7 @@ pub fn CoHandle(comptime Res: type) type {
     };
 }
 
-pub const CCB = struct {
+const CCB = struct {
     context: Context = Context{},
 
     id: usize,
@@ -292,7 +292,7 @@ const Manager = struct {
         // update main
         const main_ccb = self.getMainCCBPtr();
         main_ccb.updateRunTime();
-        try self.ccb_container.pushInPq(main_ccb);
+        try self.ccb_container.addToWaitlist(main_ccb);
         // move to next
         self.ccb_container.cur_ccb = new_ccb_ptr;
 
@@ -307,7 +307,7 @@ const Manager = struct {
         if (self.ccb_container.moveToNext()) |next_ccb| {
             if (cur_ccb.status == .Active) {
                 cur_ccb.updateRunTime();
-                try self.ccb_container.pushInPq(cur_ccb);
+                try self.ccb_container.addToWaitlist(cur_ccb);
             }
             arch.switchCtx(&cur_ccb.context, &next_ccb.context);
         }
@@ -326,8 +326,8 @@ const CCBContainer = struct {
     /// the num of alive(Active and Finished) ccb
     alive: usize = 1,
     /// a priority dequeue that manage ccb by their elapsed time
-    /// a coroutine waiting list
-    dequeue: CCBPQ,
+    /// a coroutine waitlist
+    waitlist: CCBPQ,
     allocator: Allocator,
 
     const INIT_CAP: usize = 8;
@@ -344,17 +344,17 @@ const CCBContainer = struct {
             // allocate a dummy stack for main
             .stack_size = 0,
         });
-        var dequeue = CCBPQ.init(allocator, {});
+        var waitlist = CCBPQ.init(allocator, {});
         return Self{
             .cur_ccb = main_ccb,
             .ccb_data = ccb_data,
-            .dequeue = dequeue,
+            .waitlist = waitlist,
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.dequeue.deinit();
+        self.waitlist.deinit();
         const len = self.size;
         for (self.ccb_data[0..len]) |ccb| {
             ccb.deinit(self.allocator);
@@ -367,12 +367,12 @@ const CCBContainer = struct {
         return &self.ccb_data[0];
     }
 
-    pub inline fn pushInPq(self: *Self, ccb_ptr: *CCB) !void {
-        try self.dequeue.add(ccb_ptr);
+    pub inline fn addToWaitlist(self: *Self, ccb_ptr: *CCB) !void {
+        try self.waitlist.add(ccb_ptr);
     }
 
     pub fn moveToNext(self: *Self) ?*CCB {
-        if (self.dequeue.removeMinOrNull()) |next_ccb_ptr| {
+        if (self.waitlist.removeMinOrNull()) |next_ccb_ptr| {
             self.cur_ccb = next_ccb_ptr;
             return next_ccb_ptr;
         }
@@ -440,8 +440,8 @@ const CCBContainer = struct {
             self.removeDeadInPlace();
         }
         std.debug.assert(self.alive == self.size);
-        // remap to dequeue
-        try self.remapToDequeue(cur_id);
+        // remap to waitlist
+        try self.remapToWaitlist(cur_id);
     }
 
     /// remove dead coroutine and move alive coroutine to new space
@@ -494,7 +494,7 @@ const CCBContainer = struct {
         if (self.ccb_data.len >= self.size + unused_cap) {
             return;
         }
-        // record cur id for remapToDequeue
+        // record cur id for remapTowaitlist
         const cur_id = self.cur_ccb.id;
         // need to allocate new space
         const new_cap = self.ccb_data.len * 2;
@@ -504,22 +504,22 @@ const CCBContainer = struct {
         self.allocator.free(self.ccb_data);
         self.ccb_data = new_ccb_space;
 
-        // now all ccb ptrs in dequeue is no longer valid
+        // now all ccb ptrs in waitlist is no longer valid
         // we need to add the new ccb ptrs to it
-        try self.remapToDequeue(cur_id);
+        try self.remapToWaitlist(cur_id);
     }
 
     /// when this function be called. we know that ccb_data is change
     /// that means:
     /// 1. cur_ptr may not be valid
-    /// 2. ptr in dequeue may not be valid
+    /// 2. ptr in waitlist may not be valid
     /// 
-    /// so we need to remap the ptr to dequeue and set cur_ptr and 
+    /// so we need to remap the ptr to waitlist and set cur_ptr and 
     /// we don't want cur ptr be added to queue
     /// 
     /// note that we cannot relay on self.cur_ccb because it may not be valid anymore
-    fn remapToDequeue(self: *Self, cur_id: usize) !void {
-        self.dequeue.len = 0;
+    fn remapToWaitlist(self: *Self, cur_id: usize) !void {
+        self.waitlist.len = 0;
         for (0..self.size) |idx| {
             const ccb_ptr = &self.ccb_data[idx];
             if (ccb_ptr.id == cur_id) {
@@ -529,7 +529,7 @@ const CCBContainer = struct {
             if (ccb_ptr.status != .Active) {
                 continue;
             }
-            try self.pushInPq(ccb_ptr);
+            try self.addToWaitlist(ccb_ptr);
         }
     }
 };
