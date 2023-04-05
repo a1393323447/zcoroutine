@@ -3,12 +3,16 @@ const arch = @import("arch/arch.zig");
 const Context = arch.Context;
 const Allocator = @import("std").mem.Allocator;
 
+const Timestamp = i64;
+
 const MAIN_ID: usize = 0;
 var MANAGER: ?Manager = null;
 
-/// get timestamp in millisecond
-inline fn now() i64 {
-    return std.time.milliTimestamp();
+// TODO create a time module
+
+/// get timestamp in microsecond
+inline fn now() Timestamp {
+    return std.time.microTimestamp();
 }
 
 /// a helper function to detect function return type
@@ -29,6 +33,10 @@ pub inline fn coDeinit() void {
 pub inline fn coStart(comptime function: anytype, args: anytype, config: ?CoConfig) !*const CoHandle(ResTypeOfFn(function)) {
     const conf = config orelse CoConfig{};
     return MANAGER.?.coStart(function, args, conf);
+}
+
+pub inline fn coSleep(us: u32) !void {
+    try MANAGER.?.coSleep(us);
 }
 
 pub inline fn yield() void {
@@ -86,7 +94,7 @@ pub fn CoHandle(comptime Res: type) type {
             while (true) {
                 if (MANAGER.?.getCCBPtr(self.id)) |ccb_ptr| {
                     switch (ccb_ptr.status) {
-                        .Active => yield(),
+                        .Active, .Sleep, .Frozen => yield(),
                         .Finished => {
                             defer self.deinit();
                             if (Res != void) {
@@ -129,7 +137,7 @@ const CCB = struct {
     id: usize,
     name: []const u8 = "unnamed",
 
-    start_time: i64,
+    start_time: Timestamp,
     elapsed: i64 = 0,
     status: Status = Status.Active,
 
@@ -142,12 +150,15 @@ const CCB = struct {
     pub const Status = enum(usize) {
         /// the coroutine is ready or running
         Active = 0,
+        Sleep = 1,
+        /// the coroutine is frozen and waiting for waken by a waker
+        Frozen = 2,
         /// the coroutine is finished, but is not marked as Dead by coAwait
         /// and is removed from the waiting list which means it would not be wake up again
-        Finished = 1,
+        Finished = 3,
         /// the coroutine is marked as Dead by coAwait, waiting for destory
         /// (free its stack space and itself)
-        Dead = 2,
+        Dead = 4,
     };
 
     const Self = @This();
@@ -179,12 +190,12 @@ const CCB = struct {
         self.status = Status.Active;
     }
 
-    pub fn compareFn(_: void, lhs: *Self, rhs: *Self) std.math.Order {
+    pub fn compare(_: void, lhs: *Self, rhs: *Self) std.math.Order {
         return std.math.order(lhs.elapsed, rhs.elapsed);
     }
 
-    pub inline fn updateRunTime(self: *Self) void {
-        self.elapsed = now() - self.start_time;
+    pub inline fn tick(self: *Self, t_now: Timestamp) void {
+        self.elapsed = t_now - self.start_time;
     }
 
     inline fn deinit(self: *const Self, allocator: Allocator) void {
@@ -291,7 +302,8 @@ const Manager = struct {
 
         // update main
         const main_ccb = self.getMainCCBPtr();
-        main_ccb.updateRunTime();
+        const t_now = now();
+        main_ccb.tick(t_now);
         try self.ccb_container.addToWaitlist(main_ccb);
         // move to next
         self.ccb_container.cur_ccb = new_ccb_ptr;
@@ -302,11 +314,29 @@ const Manager = struct {
         return handle_ptr;
     }
 
-    pub fn yield(self: *Self) !void {
+    pub fn coSleep(self: *Self, us: u32) !void {
+        const t_now = now();
         const cur_ccb = self.getCurrentCCBPtr();
-        if (self.ccb_container.moveToNext()) |next_ccb| {
+        cur_ccb.tick(t_now);
+        cur_ccb.status = .Sleep;
+        const wake_at = t_now + @intCast(Timestamp, us);
+        try self.ccb_container.addToSleeplist(cur_ccb.id, wake_at);
+        if (self.ccb_container.moveToNext(t_now)) |next_ccb| {
+            if (next_ccb.id == cur_ccb.id) {
+                return;
+            }
+            arch.switchCtx(&cur_ccb.context, &next_ccb.context);
+        } else {
+            std.time.sleep(@intCast(u64, us * std.time.ns_per_us));
+        }
+    }
+
+    pub fn yield(self: *Self) !void {
+        const t_now = now();
+        const cur_ccb = self.getCurrentCCBPtr();
+        if (self.ccb_container.moveToNext(t_now)) |next_ccb| {
             if (cur_ccb.status == .Active) {
-                cur_ccb.updateRunTime();
+                cur_ccb.tick(t_now);
                 try self.ccb_container.addToWaitlist(cur_ccb);
             }
             arch.switchCtx(&cur_ccb.context, &next_ccb.context);
@@ -327,13 +357,25 @@ const CCBContainer = struct {
     alive: usize = 1,
     /// a priority dequeue that manage ccb by their elapsed time
     /// a coroutine waitlist
-    waitlist: CCBPQ,
+    waitlist: WaitList,
+    /// a priority dequeue that manage sleep ccb by their wake_at time
+    sleeplist: SleepList,
+    
     allocator: Allocator,
 
     const INIT_CAP: usize = 8;
     
+    const SleepCCB = struct {
+        id: usize,
+        wake_at: Timestamp,
+        pub fn compare(_:void, a: @This(), b: @This()) std.math.Order {
+            return std.math.order(a.wake_at, b.wake_at);
+        }
+    };
     const Self = @This();
-    const CCBPQ = std.PriorityDequeue(*CCB, void, CCB.compareFn);
+    const SleepList = std.PriorityDequeue(SleepCCB, void, SleepCCB.compare);
+    const WaitList = std.PriorityDequeue(*CCB, void, CCB.compare);
+    
 
     pub fn init(allocator: Allocator) !Self {
         const ccb_data: []CCB = try allocator.alloc(CCB, INIT_CAP);
@@ -344,11 +386,13 @@ const CCBContainer = struct {
             // allocate a dummy stack for main
             .stack_size = 0,
         });
-        var waitlist = CCBPQ.init(allocator, {});
-        return Self{
+        const waitlist = WaitList.init(allocator, {});
+        const sleeplist = SleepList.init(allocator, {});
+        return Self {
             .cur_ccb = main_ccb,
             .ccb_data = ccb_data,
             .waitlist = waitlist,
+            .sleeplist = sleeplist,
             .allocator = allocator,
         };
     }
@@ -371,11 +415,48 @@ const CCBContainer = struct {
         try self.waitlist.add(ccb_ptr);
     }
 
-    pub fn moveToNext(self: *Self) ?*CCB {
+    pub inline fn addToSleeplist(self: *Self, id: usize, wake_at: Timestamp) !void {
+        const sleep_ccb = SleepCCB {
+            .id = id,
+            .wake_at = wake_at,
+        };
+        try self.sleeplist.add(sleep_ccb);
+    }
+
+    pub fn moveToNext(self: *Self, t_now: Timestamp) ?*CCB {
+        // first we try to wake up the sleep coroutine
+        const DELTA: Timestamp = -1000;
+        var op_sleep_ccb: ?*CCB = null;
+        var wake_at: Timestamp = 0;
+        if (self.sleeplist.peekMin()) |sleep_ccb| {
+            const diff = t_now - sleep_ccb.wake_at;
+            if (diff >= DELTA) {
+                // remove this coroutine from sleeplist
+                _ = self.sleeplist.removeMin();
+                if (self.binarySearchCCB(sleep_ccb.id)) |next_ccb_ptr| {
+                    self.cur_ccb = next_ccb_ptr;
+                    // recored the sleep ccb we find
+                    op_sleep_ccb = next_ccb_ptr;
+                    wake_at = sleep_ccb.wake_at;
+                    return next_ccb_ptr;
+                }
+            }
+        }
+        // then we search on waitlist
         if (self.waitlist.removeMinOrNull()) |next_ccb_ptr| {
             self.cur_ccb = next_ccb_ptr;
             return next_ccb_ptr;
         }
+
+        // if no ccb on wait list and we found a sleep ccb
+        // then we wait for the sleep ccb
+        if (op_sleep_ccb) |sleep_ccb| {
+            const us_sleep = now() - wake_at;
+            const nano_sleep = std.math.max(0, us_sleep) * std.time.ns_per_us;
+            std.time.sleep(@intCast(u32, nano_sleep));
+            return sleep_ccb;
+        }
+
         return null;
     }
 
@@ -514,7 +595,7 @@ const CCBContainer = struct {
     /// 1. cur_ptr may not be valid
     /// 2. ptr in waitlist may not be valid
     /// 
-    /// so we need to remap the ptr to waitlist and set cur_ptr and 
+    /// so we need to remap the ptr to waitlist  and set cur_ptr and 
     /// we don't want cur ptr be added to queue
     /// 
     /// note that we cannot relay on self.cur_ccb because it may not be valid anymore
@@ -526,10 +607,9 @@ const CCBContainer = struct {
                 self.cur_ccb = ccb_ptr;
                 continue;
             }
-            if (ccb_ptr.status != .Active) {
-                continue;
-            }
-            try self.addToWaitlist(ccb_ptr);
+            if (ccb_ptr.status == .Active) {
+                try self.addToWaitlist(ccb_ptr);
+            } 
         }
     }
 };
