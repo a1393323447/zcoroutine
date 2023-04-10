@@ -9,6 +9,7 @@ const MAIN_ID: usize = 0;
 var MANAGER: ?Manager = null;
 
 // TODO create a time module
+// TODO introduce a internal noreturn yield
 
 /// get timestamp in microsecond
 inline fn now() Timestamp {
@@ -33,6 +34,10 @@ pub inline fn coDeinit() void {
 pub inline fn coStart(comptime function: anytype, args: anytype, config: ?CoConfig) !*const CoHandle(ResTypeOfFn(function)) {
     const conf = config orelse CoConfig{};
     return MANAGER.?.coStart(function, args, conf);
+}
+
+pub inline fn coExit() noreturn {
+    MANAGER.?.coExit();
 }
 
 pub inline fn coSleep(us: u32) !void {
@@ -230,11 +235,21 @@ fn TypeSafeCallTable(comptime Args: type, comptime Res: type, comptime function:
                 // or on its stack, which is also valid
                 h.res = res;
             }
-            // then we need to mark this coroutine(*current* coroutine) as Finished
-            markCurFinished();
-            // yield to anthor coroutine and never return
-            yield();
+            coExit();
+            unreachable;
+        }
 
+        fn forzenCall(wrapper: *ArgsWrapper(Args)) callconv(.C) void {
+            const args = wrapper.*;
+            asm volatile ("" ::: "memory");
+            // forzen at this point
+            yield();
+            const res = @call(.auto, function, args);
+            if (Res != void) {
+                var h = @intToPtr(*CoHandle(Res), currentCCBPtr().handle_addr);
+                h.res = res;
+            }
+            coExit();
             unreachable;
         }
     };
@@ -312,6 +327,14 @@ const Manager = struct {
         arch.initCall(@ptrToInt(&args_wapper), type_safe_fn_addr);
 
         return handle_ptr;
+    }
+
+    pub fn coExit(self: *Self) noreturn {
+        const t_now = now();
+        self.ccb_container.cur_ccb.status = .Finished;
+        const next = self.ccb_container.moveToNext(t_now).?;
+        arch.switchToNext(&next.context);
+        unreachable;
     }
 
     pub fn coSleep(self: *Self, us: u32) !void {

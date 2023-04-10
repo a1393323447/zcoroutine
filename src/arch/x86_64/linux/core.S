@@ -1,5 +1,6 @@
 .section .text
 .global switchCtx
+.global switchToNext
 .global initCall
 .align  2
 # rdi: cur_ctx_ptr
@@ -29,6 +30,19 @@ switchCtx:
 .switch_ctx_to_return:
     ret
 
+# rdi: next_ctx_ptr
+switchToNext:
+    # load next context
+    movq   0(%rdi), %rbx     # load rbx
+    movq   8(%rdi), %r12     # load r12
+    movq  16(%rdi), %r13     # load r13
+    movq  24(%rdi), %r14     # load r14
+    movq  32(%rdi), %r15     # load r15
+    movq  40(%rdi), %rsp     # load rsp
+    movq  48(%rdi), %rbp     # load rbp
+    pushq 56(%rdi)           # load rip
+    ret
+
 # rdi: args_ptr
 # rsi: typeSafeCall function address
 initCall:
@@ -52,7 +66,7 @@ initCall:
     movq %rsp, 40(%rcx)    # save rsp
     movq %rbp, 48(%rcx)    # save rbp
     # for saving rip to addr of `.return`
-    leaq .switch_ctx_to_return(%rip), %rbx
+    leaq .init_call_to_return(%rip), %rbx
     movq %rbx, 56(%rcx)
 
     # load coroutine stack

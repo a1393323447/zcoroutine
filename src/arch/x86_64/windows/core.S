@@ -1,5 +1,6 @@
 .section .text
 .global switchCtx
+.global switchToNext
 .global initCall
 .align  2
 # rcx: cur_ctx_ptr
@@ -53,6 +54,30 @@ switchCtx:
 .switch_ctx_to_return:
     ret
 
+switchToNext:
+    # load next context
+    movq  0(%rdx), %rbx      # load rbx
+    movq  8(%rdx), %r12      # load r12
+    movq 16(%rdx), %r13      # load r13
+    movq 24(%rdx), %r14      # load r14
+    movq 32(%rdx), %r15      # load r15
+    movq 40(%rdx), %rdi      # load rdi
+    movq 48(%rdx), %rsi      # load rsi
+    movq 56(%rdx), %rsp      # load rsp
+    movq 64(%rdx), %rbp      # load rbp
+    movups 80(%rdx), %xmm6   # load xmm6
+    movups 96(%rdx), %xmm7   # load xmm7
+    movups 112(%rdx), %xmm8  # load xmm8
+    movups 128(%rdx), %xmm9  # load xmm9
+    movups 144(%rdx), %xmm10 # load xmm10
+    movups 160(%rdx), %xmm11 # load xmm11
+    movups 176(%rdx), %xmm12 # load xmm12
+    movups 192(%rdx), %xmm13 # load xmm13
+    movups 208(%rdx), %xmm14 # load xmm14
+    movups 224(%rdx), %xmm15 # load xmm15
+    pushq 72(%rdx)           # load rip
+    ret
+
 # rcx: args_ptr
 # rdx: typeSafeCall function address
 initCall:
@@ -88,7 +113,7 @@ initCall:
     movups %xmm14, 208(%r8) # save xmm14
     movups %xmm15, 224(%r8) # save xmm15
     # for saving rip to addr of `.return`
-    leaq .switch_ctx_to_return(%rip), %rbx
+    leaq .init_call_to_return(%rip), %rbx
     movq %rbx, 72(%r8)
 
     # load coroutine stack

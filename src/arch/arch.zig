@@ -9,4 +9,5 @@ pub const Context: type = switch (native_arch) {
 };
 
 pub extern fn switchCtx(cur :*Context,  next: *Context) callconv(.C) void;
+pub extern fn switchToNext(next: *Context) callconv(.C) noreturn;
 pub extern fn initCall(wapper_ptr: usize, type_safe_fn_addr: usize) callconv(.C) void;
