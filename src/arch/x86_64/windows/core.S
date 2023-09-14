@@ -56,26 +56,26 @@ switchCtx:
 
 switchToNext:
     # load next context
-    movq  0(%rdx), %rbx      # load rbx
-    movq  8(%rdx), %r12      # load r12
-    movq 16(%rdx), %r13      # load r13
-    movq 24(%rdx), %r14      # load r14
-    movq 32(%rdx), %r15      # load r15
-    movq 40(%rdx), %rdi      # load rdi
-    movq 48(%rdx), %rsi      # load rsi
-    movq 56(%rdx), %rsp      # load rsp
-    movq 64(%rdx), %rbp      # load rbp
-    movups 80(%rdx), %xmm6   # load xmm6
-    movups 96(%rdx), %xmm7   # load xmm7
-    movups 112(%rdx), %xmm8  # load xmm8
-    movups 128(%rdx), %xmm9  # load xmm9
-    movups 144(%rdx), %xmm10 # load xmm10
-    movups 160(%rdx), %xmm11 # load xmm11
-    movups 176(%rdx), %xmm12 # load xmm12
-    movups 192(%rdx), %xmm13 # load xmm13
-    movups 208(%rdx), %xmm14 # load xmm14
-    movups 224(%rdx), %xmm15 # load xmm15
-    pushq 72(%rdx)           # load rip
+    movq  0(%rcx), %rbx      # load rbx
+    movq  8(%rcx), %r12      # load r12
+    movq 16(%rcx), %r13      # load r13
+    movq 24(%rcx), %r14      # load r14
+    movq 32(%rcx), %r15      # load r15
+    movq 40(%rcx), %rdi      # load rdi
+    movq 48(%rcx), %rsi      # load rsi
+    movq 56(%rcx), %rsp      # load rsp
+    movq 64(%rcx), %rbp      # load rbp
+    movups 80(%rcx), %xmm6   # load xmm6
+    movups 96(%rcx), %xmm7   # load xmm7
+    movups 112(%rcx), %xmm8  # load xmm8
+    movups 128(%rcx), %xmm9  # load xmm9
+    movups 144(%rcx), %xmm10 # load xmm10
+    movups 160(%rcx), %xmm11 # load xmm11
+    movups 176(%rcx), %xmm12 # load xmm12
+    movups 192(%rcx), %xmm13 # load xmm13
+    movups 208(%rcx), %xmm14 # load xmm14
+    movups 224(%rcx), %xmm15 # load xmm15
+    pushq 72(%rcx)           # load rip
     ret
 
 # rcx: args_ptr
