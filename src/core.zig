@@ -183,7 +183,7 @@ const CCB = struct {
         // init context
         self.context = Context{};
         // then we need to allocate a ptr space for keeping this coroutine's handle ptr
-        const sp = @ptrToInt(stack.ptr) + stack.len;
+        const sp = @intFromPtr(stack.ptr) + stack.len;
         self.context.setStack(sp);
 
         self.id = id;
@@ -219,14 +219,14 @@ fn TypeSafeCallTable(comptime Args: type, comptime Res: type, comptime function:
         const Self = @This();
 
         pub inline fn getAddr() usize {
-            return @ptrToInt(&Self.call);
+            return @intFromPtr(&Self.call);
         }
 
-        fn call(wrapper: *ArgsWrapper(Args))callconv(.C)  void {
+        fn call(wrapper: *ArgsWrapper(Args)) callconv(.C) noreturn {
             const res = @call(.auto, function, wrapper.args);
             if (Res != void) {
                 // handle is allocacted on heap, so this pointer is still vaild
-                var h = @intToPtr(*CoHandle(Res), currentCCBPtr().handle_addr);
+                var h: *CoHandle(Res) = @ptrFromInt(currentCCBPtr().handle_addr);
                 // now the coroutine return we sure that we now in this coroutine's ctx
                 // that means:
                 // this is *current* coroutine
@@ -236,21 +236,19 @@ fn TypeSafeCallTable(comptime Args: type, comptime Res: type, comptime function:
                 h.res = res;
             }
             coExit();
-            unreachable;
         }
 
-        fn forzenCall(wrapper: *ArgsWrapper(Args)) callconv(.C) void {
+        fn forzenCall(wrapper: *ArgsWrapper(Args)) callconv(.C) noreturn {
             const args = wrapper.*;
             asm volatile ("" ::: "memory");
             // forzen at this point
             yield();
             const res = @call(.auto, function, args);
             if (Res != void) {
-                var h = @intToPtr(*CoHandle(Res), currentCCBPtr().handle_addr);
+                var h: *CoHandle(Res) = @ptrFromInt(currentCCBPtr().handle_addr);
                 h.res = res;
             }
             coExit();
-            unreachable;
         }
     };
 }
@@ -309,7 +307,7 @@ const Manager = struct {
         // alloc a handle for new coroutine
         const handle_ptr = try CoHandle(ResTypeOfFn(function)).init(new_ccb_ptr.id, self.allocator);
         // regist handle on ccb
-        new_ccb_ptr.handle_addr = @ptrToInt(handle_ptr);
+        new_ccb_ptr.handle_addr = @intFromPtr(handle_ptr);
         // wrap args in a struct to get their address
         const args_wapper = ArgsWrapper(Args){
             .args = args,
@@ -324,7 +322,7 @@ const Manager = struct {
         self.ccb_container.cur_ccb = new_ccb_ptr;
 
         const type_safe_fn_addr = TypeSafeCallTable(Args, Res, function).getAddr();
-        arch.initCall(@ptrToInt(&args_wapper), type_safe_fn_addr);
+        arch.initCall(@intFromPtr(&args_wapper), type_safe_fn_addr);
 
         return handle_ptr;
     }
@@ -342,7 +340,7 @@ const Manager = struct {
         const cur_ccb = self.getCurrentCCBPtr();
         cur_ccb.tick(t_now);
         cur_ccb.status = .Sleep;
-        const wake_at = t_now + @intCast(Timestamp, us);
+        const wake_at = t_now + @as(Timestamp, @intCast(us));
         try self.ccb_container.addToSleeplist(cur_ccb.id, wake_at);
         if (self.ccb_container.moveToNext(t_now)) |next_ccb| {
             if (next_ccb.id == cur_ccb.id) {
@@ -350,7 +348,7 @@ const Manager = struct {
             }
             arch.switchCtx(&cur_ccb.context, &next_ccb.context);
         } else {
-            std.time.sleep(@intCast(u64, us * std.time.ns_per_us));
+            std.time.sleep(@intCast(us * std.time.ns_per_us));
         }
     }
 
@@ -491,8 +489,8 @@ const CCBContainer = struct {
             // remove from the sleep list
             _ = self.sleeplist.removeMin();
             const us_sleep = wake_at - now();
-            const nano_sleep = std.math.max(0, us_sleep) * std.time.ns_per_us;
-            std.time.sleep(@intCast(u32, nano_sleep));
+            const nano_sleep = @max(0, us_sleep) * std.time.ns_per_us;
+            std.time.sleep(@intCast(nano_sleep));
             self.cur_ccb = sleep_ccb;
             self.cur_ccb.status = .Active;
             return sleep_ccb;
@@ -516,16 +514,14 @@ const CCBContainer = struct {
     /// search a CCB with target_id
     pub fn binarySearchCCB(self: *Self, target_id: usize) ?*CCB {
         var left: isize = 0;
-        var right: isize = @intCast(isize, self.size) - 1;
+        var right: isize = @as(isize, @intCast(self.size)) - 1;
         while (left <= right) {
             const mid = @divTrunc(right - left, 2) + left;
-            const mid_idx = @intCast(usize, mid);
-            const m_id = self.ccb_data[mid_idx].id;
+            const m_id = self.ccb_data[@intCast(mid)].id;
             if (m_id < target_id) {
                 left = mid + 1;
             } else if (m_id == target_id) {
-                const idx = @intCast(usize, mid);
-                return &self.ccb_data[idx];
+                return &self.ccb_data[@intCast(mid)];
             } else {
                 right = mid - 1;
             }

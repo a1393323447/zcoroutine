@@ -1,4 +1,5 @@
 const std = @import("std");
+const LazyPath = std.Build.LazyPath;
 const Arch = std.Target.Cpu.Arch;
 const OsTag = std.Target.Os.Tag;
 
@@ -40,8 +41,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    lib.addAssemblyFile(target_asm_path);
-    lib.install();
+    lib.addAssemblyFile(LazyPath.relative(target_asm_path));
+    b.installArtifact(lib);
 
     const exe = b.addExecutable(.{
         .name = "zcoroutine",
@@ -51,16 +52,17 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe.addAssemblyFile(target_asm_path);
+    exe.addAssemblyFile(LazyPath.relative(target_asm_path));
+    exe.strip = false;
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
-    exe.install();
+    b.installArtifact(exe);
 
     // This *creates* a RunStep in the build graph, to be executed when another
     // step is evaluated that depends on it. The next line below will establish
     // such a dependency.
-    const run_cmd = exe.run();
+    const run_cmd = b.addRunArtifact(exe);
 
     // By making the run step depend on the install step, it will be run from the
     // installation directory rather than directly from within the cache directory.
