@@ -51,14 +51,6 @@ pub inline fn yield() void {
     return;
 }
 
-pub export fn mainCtxPtr() callconv(.C) *Context {
-    return &MANAGER.?.getMainCCBPtr().context;
-}
-
-pub export fn currentCtxPtr() callconv(.C) *Context {
-    return &MANAGER.?.getCurrentCCBPtr().context;
-}
-
 inline fn currentCCBPtr() *CCB {
     return MANAGER.?.getCurrentCCBPtr();
 }
