@@ -45,32 +45,23 @@ switchToNext:
 
 # rdi: args_ptr
 # rsi: typeSafeCall function address
+# rdx: curr_ctx_ptr
+# rcx: next_ctx_ptr
 initCall:
-    push %rdi # save args_ptr
-    push %rsi # save func addr
-    call mainCtxPtr
-    push %rax # save main ctx ptr
-    call currentCtxPtr
-    popq %rcx # load main ctx ptr
-    popq %rsi # load func addr
-    popq %rdi # load args_ptr
-
-    # now rcx = main_ctx
-    #     rax = cur_ctx
-    # save main ctx
-    movq %rbx,  0(%rcx)    # save rbx
-    movq %r12,  8(%rcx)    # save r12
-    movq %r13, 16(%rcx)    # save r13
-    movq %r14, 24(%rcx)    # save r14
-    movq %r15, 32(%rcx)    # save r15
-    movq %rsp, 40(%rcx)    # save rsp
-    movq %rbp, 48(%rcx)    # save rbp
+    # save curr ctx
+    movq %rbx,  0(%rdx)    # save rbx
+    movq %r12,  8(%rdx)    # save r12
+    movq %r13, 16(%rdx)    # save r13
+    movq %r14, 24(%rdx)    # save r14
+    movq %r15, 32(%rdx)    # save r15
+    movq %rsp, 40(%rdx)    # save rsp
+    movq %rbp, 48(%rdx)    # save rbp
     # for saving rip to addr of `.return`
     leaq .init_call_to_return(%rip), %rbx
-    movq %rbx, 56(%rcx)
+    movq %rbx, 56(%rdx)
 
     # load coroutine stack
-    movq 40(%rax), %rsp
+    movq 40(%rcx), %rsp
     
     # call typeSafeCall function
     call *%rsi

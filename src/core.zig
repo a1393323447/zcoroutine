@@ -297,7 +297,8 @@ const Manager = struct {
         self: *Self, 
         comptime function: anytype, 
         args: anytype, 
-        config: CoConfig) !*const CoHandle(ResTypeOfFn(function)) {
+        config: CoConfig) !*const CoHandle(ResTypeOfFn(function)) 
+    {
         const Args = @TypeOf(args);
         const Res = ResTypeOfFn(function);
         // emplace a new ccb in cbb_container and inc next_id
@@ -305,7 +306,7 @@ const Manager = struct {
         self.next_unused_id += 1;
 
         // alloc a handle for new coroutine
-        const handle_ptr = try CoHandle(ResTypeOfFn(function)).init(new_ccb_ptr.id, self.allocator);
+        const handle_ptr = try CoHandle(Res).init(new_ccb_ptr.id, self.allocator);
         // regist handle on ccb
         new_ccb_ptr.handle_addr = @intFromPtr(handle_ptr);
         // wrap args in a struct to get their address
@@ -313,16 +314,21 @@ const Manager = struct {
             .args = args,
         };
 
-        // update main
-        const main_ccb = self.getMainCCBPtr();
+        // update cur
+        const cur_ccb = self.getCurrentCCBPtr();
         const t_now = now();
-        main_ccb.tick(t_now);
-        try self.ccb_container.addToWaitlist(main_ccb);
+        cur_ccb.tick(t_now);
+        try self.ccb_container.addToWaitlist(cur_ccb);
         // move to next
         self.ccb_container.cur_ccb = new_ccb_ptr;
 
         const type_safe_fn_addr = TypeSafeCallTable(Args, Res, function).getAddr();
-        arch.initCall(@intFromPtr(&args_wapper), type_safe_fn_addr);
+        arch.initCall(
+            @intFromPtr(&args_wapper), 
+            type_safe_fn_addr, 
+            @intFromPtr(&cur_ccb.context),
+            @intFromPtr(&new_ccb_ptr.context)
+        );
 
         return handle_ptr;
     }
@@ -332,7 +338,6 @@ const Manager = struct {
         self.ccb_container.cur_ccb.status = .Finished;
         const next = self.ccb_container.moveToNext(t_now).?;
         arch.switchToNext(&next.context);
-        unreachable;
     }
 
     pub fn coSleep(self: *Self, us: u32) !void {

@@ -80,19 +80,10 @@ switchToNext:
 
 # rcx: args_ptr
 # rdx: typeSafeCall function address
+# r8: curr_ctx_ptr
+# r9: next_ctx_ptr
 initCall:
-    push %rcx # save args_ptr
-    push %rdx # save func addr
-    call mainCtxPtr
-    push %rax # save main ctx ptr
-    call currentCtxPtr
-    popq %r8  # load main ctx ptr
-    popq %rdx # load func addr
-    popq %rcx # load args_ptr
-
-    # now r8  = main_ctx
-    #     rax = cur_ctx
-    # save main ctx
+    # save curr ctx
     movq %rbx,  0(%r8)      # save rbx
     movq %r12,  8(%r8)      # save r12
     movq %r13, 16(%r8)      # save r13
@@ -117,7 +108,7 @@ initCall:
     movq %rbx, 72(%r8)
 
     # load coroutine stack
-    movq 56(%rax), %rsp 
+    movq 56(%r9), %rsp 
     
     # call typeSafeCall function
     call *%rdx
