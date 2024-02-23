@@ -33,6 +33,11 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    _ = b.addModule("zcoroutine", .{
+        .source_file = .{ .path = "src/core.zig" },
+        .dependencies = &[_]std.Build.ModuleDependency{},
+    });
+
     const lib = b.addStaticLibrary(.{
         .name = "zcoroutine",
         // In this case the main source file is merely a path, however, in more
